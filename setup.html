@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cam Light Setup</title>
+<style>
+  :root { --bg:#111418; --panel:#1b2027; --text:#e8ecf1; --muted:#8a94a3; --accent:#3d8bfd; --danger:#e5534b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 12px 16px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .view { position: relative; margin: 12px 0; border-radius: 10px; overflow: hidden; background:#000; }
+  .view img { display:block; width:100%; height:auto; aspect-ratio: 16 / 9; }
+  .view canvas { position:absolute; inset:0; touch-action: manipulation; cursor: crosshair; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin: 8px 0; }
+  button, select, input { font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid #2d3440; border-radius: 8px; padding: 8px 12px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color:#fff; font-weight:600; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .4; cursor: default; }
+  .zones { list-style:none; padding:0; margin: 12px 0; display:grid; gap:8px; }
+  .zones li { display:flex; gap:8px; align-items:center; background:var(--panel); padding:8px; border-radius:8px; }
+  .zones input { flex:1; min-width:0; }
+  .sw { width:14px; height:14px; border-radius:3px; flex:none; }
+  #status { font-variant-numeric: tabular-nums; }
+  #dirty { color:#f0b429; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cam Light Setup</h1>
+  <div class="muted">Tap the picture to place corners around an area of floor, then press <b>Finish zone</b>.
+    A light turns on when a person's feet are inside its zone.</div>
+
+  <div class="view">
+    <img id="cam" src="/stream" alt="live camera">
+    <canvas id="cv"></canvas>
+  </div>
+  <div id="status" class="muted">connecting…</div>
+
+  <div class="bar">
+    <label>Light <select id="light"></select></label>
+    <button id="finish" class="primary">Finish zone</button>
+    <button id="undo">Undo corner</button>
+    <button id="cancel">Cancel</button>
+  </div>
+
+  <ul id="zones" class="zones"></ul>
+
+  <div class="bar">
+    <button id="save" class="primary">Save</button>
+    <button id="revert">Revert</button>
+    <span id="dirty"></span>
+  </div>
+</main>
+
+<script>
+const COLORS = [[255,200,0],[0,120,255],[120,255,0],[200,0,255],[255,255,120],
+                [0,255,255],[255,120,180],[255,120,0],[200,200,200]];
+const $ = id => document.getElementById(id);
+const img = $('cam'), cv = $('cv'), ctx = cv.getContext('2d');
+let zones = [], current = [], active = [], dirty = false;
+
+const col = (l, a = 1) => { const [r,g,b] = COLORS[(l - 1) % COLORS.length]; return `rgba(${r},${g},${b},${a})`; };
+for (let i = 1; i <= 9; i++) $('light').add(new Option(i, i));
+
+function setDirty(d) { dirty = d; $('dirty').textContent = d ? 'Unsaved changes' : ''; }
+
+function resize() {
+  const r = img.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  draw();
+}
+new ResizeObserver(resize).observe(img);
+
+function path(pts, w, h) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => i ? ctx.lineTo(x * w, y * h) : ctx.moveTo(x * w, y * h));
+}
+
+function draw() {
+  const d = devicePixelRatio || 1, w = cv.width / d, h = cv.height / d;
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineWidth = 2; ctx.font = 'bold 13px system-ui, sans-serif';
+  for (const z of zones) {
+    path(z.points, w, h); ctx.closePath();
+    if (active.includes(z.light)) { ctx.fillStyle = col(z.light, .35); ctx.fill(); }
+    ctx.strokeStyle = col(z.light); ctx.stroke();
+    ctx.fillStyle = col(z.light);
+    ctx.fillText(`${z.name} → L${z.light}`, z.points[0][0] * w + 4, z.points[0][1] * h - 6);
+  }
+  if (current.length) {
+    const l = +$('light').value;
+    ctx.strokeStyle = ctx.fillStyle = col(l);
+    path(current, w, h); ctx.stroke();
+    if (current.length > 2) {
+      ctx.setLineDash([5, 5]); ctx.beginPath();
+      ctx.moveTo(current.at(-1)[0] * w, current.at(-1)[1] * h);
+      ctx.lineTo(current[0][0] * w, current[0][1] * h); ctx.stroke(); ctx.setLineDash([]);
+    }
+    for (const [x, y] of current) { ctx.beginPath(); ctx.arc(x * w, y * h, 5, 0, 7); ctx.fill(); }
+  }
+  $('finish').disabled = current.length < 3;
+  $('undo').disabled = $('cancel').disabled = !current.length;
+}
+
+cv.addEventListener('pointerdown', e => {
+  const r = cv.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  current.push([+x.toFixed(4), +y.toFixed(4)]);
+  draw();
+});
+
+$('finish').onclick = () => {
+  if (current.length < 3) return;
+  zones.push({ name: `zone${zones.length + 1}`, light: +$('light').value, points: current });
+  current = []; setDirty(true); renderList(); draw();
+};
+$('undo').onclick = () => { current.pop(); draw(); };
+$('cancel').onclick = () => { current = []; draw(); };
+$('light').onchange = draw;
+
+function renderList() {
+  const ul = $('zones'); ul.innerHTML = '';
+  zones.forEach((z, i) => {
+    const li = document.createElement('li');
+    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = col(z.light);
+    const name = document.createElement('input'); name.value = z.name; name.maxLength = 32;
+    name.oninput = () => { z.name = name.value; setDirty(true); draw(); };
+    const sel = document.createElement('select');
+    for (let n = 1; n <= 9; n++) sel.add(new Option(`Light ${n}`, n));
+    sel.value = z.light;
+    sel.onchange = () => { z.light = +sel.value; setDirty(true); renderList(); draw(); };
+    const del = document.createElement('button'); del.textContent = 'Delete'; del.className = 'danger';
+    del.onclick = () => { zones.splice(i, 1); setDirty(true); renderList(); draw(); };
+    li.append(sw, name, sel, del); ul.append(li);
+  });
+  if (!zones.length) ul.innerHTML = '<li class="muted">No zones yet: the whole picture controls light 1.</li>';
+}
+
+async function load() {
+  const r = await fetch('/api/zones'); zones = (await r.json()).zones;
+  current = []; setDirty(false); renderList(); draw();
+}
+$('revert').onclick = load;
+
+$('save').onclick = async () => {
+  const r = await fetch('/api/zones', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ zones }) });
+  const j = await r.json();
+  if (r.ok) { zones = j.zones; setDirty(false); renderList(); draw(); }
+  else alert('Save failed: ' + j.error);
+};
+
+async function poll() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    active = s.lights_on || [];
+    $('status').textContent = `${s.mode} · ${s.people} ${s.people === 1 ? 'person' : 'people'} · ` +
+      `${s.fps} fps · lights on: ${active.length ? active.join(', ') : 'none'}`;
+    draw();
+  } catch { $('status').textContent = 'camera offline, retrying…'; }
+}
+setInterval(poll, 1000);
+
+img.onerror = () => setTimeout(() => { img.src = '/stream?' + Date.now(); }, 2000);
+window.addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+load();
+</script>
+</body>
+</html>

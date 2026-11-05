@@ -1,0 +1,22 @@
+# Starts cam light automatically at boot (no monitor/keyboard needed).
+# Install on the Pi:
+#   sudo cp ~/cam-light/cam-light.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cam-light
+# Logs:   journalctl -u cam-light -f
+[Unit]
+Description=Cam light person detection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=p1plup
+WorkingDirectory=/home/p1plup/cam-light
+ExecStart=/home/p1plup/yolo/bin/python3 /home/p1plup/cam-light/main.py
+# add e.g.  --serial /dev/ttyUSB0  to the line above once the ESP32 is connected
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
