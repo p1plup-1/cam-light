@@ -17,3 +17,6 @@ To accomplish this, we need the following:
 | 12V 3A power supply | power |
 | Buck converter | The raspberrypi 5 runs on 5V but the IR led is 12V |
 | IR-pass acrylic sheet | Hide the illuminator in the casing |
+
+## SETUP 
+<img width="950" height="390" alt="Screenshot 2026-11-05 024150" src="https://github.com/user-attachments/assets/780060df-5c9b-44fe-a0f6-38f14842995b" />
