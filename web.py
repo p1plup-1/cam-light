@@ -3,7 +3,8 @@ Tiny built-in web server for setting up zones from a phone/laptop (no monitor ne
 Standard library only. Started by main.py; open  http://<pi-name>.local:8080
 
 GET  /             setup page (setup.html)
-GET  /stream       live MJPEG video
+GET  /stream       live MJPEG video (with person boxes)
+GET  /raw          live MJPEG video, untouched camera image (no boxes/text)
 GET  /api/zones    current zones
 POST /api/zones    replace zones  {"zones": [...]}  -> saved to zones.json, applied live
 GET  /api/status   people / fps / IR mode / which lights are on
@@ -26,15 +27,18 @@ class Shared:
     def __init__(self, zones, zones_path):
         self.cond = threading.Condition()
         self.jpeg = None
+        self.raw_jpeg = None
+        self.raw_viewers = 0  # main loop only encodes raw frames while someone watches
         self.frame_id = 0
         self.status = {}
         self.zones = zones
         self.zones_path = zones_path
         self.zones_version = 0
 
-    def put_frame(self, jpeg, status):
+    def put_frame(self, jpeg, status, raw_jpeg=None):
         with self.cond:
             self.jpeg = jpeg
+            self.raw_jpeg = raw_jpeg
             self.status = status
             self.frame_id += 1
             self.cond.notify_all()
@@ -101,7 +105,15 @@ class Handler(BaseHTTPRequestHandler):
             with self.shared.cond:
                 self._send(200, self.shared.status)
         elif path == "/stream":
-            self._stream()
+            self._stream("jpeg")
+        elif path == "/raw":
+            with self.shared.cond:
+                self.shared.raw_viewers += 1
+            try:
+                self._stream("raw_jpeg")
+            finally:
+                with self.shared.cond:
+                    self.shared.raw_viewers -= 1
         else:
             self._send(404, {"error": "not found"})
 
@@ -119,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
         print(f"Zones updated from web: {len(zones)} zone(s)")
         self._send(200, {"ok": True, "zones": zones})
 
-    def _stream(self):
+    def _stream(self, attr):
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.send_header("Cache-Control", "no-store")
@@ -129,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 with self.shared.cond:
                     self.shared.cond.wait_for(lambda: self.shared.frame_id != last, timeout=2)
-                    jpeg, last = self.shared.jpeg, self.shared.frame_id
+                    jpeg, last = getattr(self.shared, attr), self.shared.frame_id
                 if jpeg is None:
                     continue
                 self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")

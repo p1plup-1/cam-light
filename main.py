@@ -166,8 +166,12 @@ def main():
 
             if args.port:  # web page draws zones itself, so stream without them
                 ok, jpg = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                raw = None
+                if shared.raw_viewers:  # someone has /raw open
+                    rok, rjpg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    raw = rjpg.tobytes() if rok else None
                 if ok:
-                    shared.put_frame(jpg.tobytes(), {
+                    shared.put_frame(jpg.tobytes(), raw_jpeg=raw, status={
                         "people": len(points), "fps": round(fps, 1), "lights_on": lights_on,
                         "mode": "IR" if ir_mode else "DAY", "sat": round(float(sat), 1),
                     })
